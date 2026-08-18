@@ -2,7 +2,7 @@
 """
 Procesador Masivo de Declaraciones de Importación (DIM - Formulario 500 DIAN)
 ================================================================================
-App Streamlit optimizada para la extracción robusta de campos y formato DIAN.
+App Streamlit con parser numérico avanzado anti-puntos/comas y extracción robusta.
 """
 
 import io
@@ -51,37 +51,46 @@ COLUMNAS = [
     "Campos_no_encontrados",
 ]
 
-MONTO = r"\d{1,3}(?:\.\d{3})*[\.,]\d{2}|\d+(?:[\.,]\d+)?"
-ENTERO_MILES = r"\d{1,3}(?:\.\d{3})*|\d+"
+MONTO = r"[\d\.,]+"
+ENTERO_MILES = r"[\d\.,]+"
 
 # --------------------------------------------------------------------------
-# Funciones Matemáticas y de Limpieza
+# Parser Numérico Avanzado (Manejo exacto de puntos y comas DIAN)
 # --------------------------------------------------------------------------
 
 def limpiar_monto(val_str):
-    """Convierte los montos de la DIAN a float nativo manejando correctamente puntos y comas."""
+    """
+    Convierte montos de la DIAN manejando correctamente estructuras complejas
+    con múltiples puntos (ej: 1.860.00 -> 1860.0, 262.50 -> 262.5, 2.364.965 -> 2364965.0).
+    """
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
     
-    # Eliminar caracteres extraños pero conservar puntos, comas y números
+    # Conservar solo dígitos, puntos y comas
     val_str = re.sub(r'[^\d.,]', '', val_str)
     if not val_str:
         return 0.0
 
-    # Formato DIAN tipico ej: 1.860.00 o 262.50
-    if '.' in val_str and ',' not in val_str:
+    # Si hay coma, se asume separador decimal estándar latino
+    if ',' in val_str:
+        val_str = val_str.replace('.', '').replace(',', '.')
+    else:
+        # Solo puntos presentes
         partes = val_str.split('.')
-        if len(partes) > 2:
-            # Ej: 1.860.00 -> miles con punto y decimales con punto o sin comas
-            val_str = "".join(partes[:-1]) + "." + partes[-1]
-    elif ',' in val_str and '.' in val_str:
-        if val_str.rfind(',') > val_str.rfind('.'):
-            val_str = val_str.replace('.', '').replace(',', '.')
-        else:
-            val_str = val_str.replace(',', '')
-    elif ',' in val_str:
-        val_str = val_str.replace(',', '.')
+        if len(partes) == 1:
+            pass
+        elif len(partes) == 2:
+            # Si la segunda parte tiene exactamente 2 dígitos, actúa como decimal (ej: 262.50)
+            # Excepción: si es de la forma 1.860 donde la parte entera es pequeña y tiene 3 dígitos, es miles.
+            if len(partes[1]) == 3 and len(partes[0]) <= 3:
+                val_str = val_str.replace('.', '')
+        elif len(partes) > 2:
+            # Múltiples puntos (ej: 1.860.00). Si la última parte tiene 2 dígitos, es decimal.
+            if len(partes[-1]) == 2:
+                val_str = "".join(partes[:-1]) + "." + partes[-1]
+            else:
+                val_str = val_str.replace('.', '')
 
     try:
         return float(val_str)
@@ -105,11 +114,14 @@ def dividir_dims(texto: str):
     partes = re.split(r"(?=Declaraci[oó]n de Importaci[oó]n)", texto, flags=re.IGNORECASE)
     return [p for p in partes if re.search(r"N[uú]mero de formulario", p, re.IGNORECASE)]
 
-def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
+def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: str) -> dict:
     faltantes = []
 
     def campo(nombre, patron, grupo=1, default=""):
-        valor = _buscar(patron, texto, grupo=grupo)
+        valor = _buscar(patron, chunk_texto, grupo=grupo)
+        if not valor:
+            # Intentar búsqueda global en todo el texto si falla en el chunk
+            valor = _buscar(patron, texto_completo, grupo=grupo)
         if not valor:
             faltantes.append(nombre)
             return default
@@ -130,9 +142,7 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
     cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
-    # -----------------------------------------------------------
-    # Extracción y conversión de valores numéricos
-    # -----------------------------------------------------------
+    # Extracción y limpieza estricta de montos
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
@@ -143,26 +153,25 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
         no_bultos = int(re.sub(r'[^\d]', '', n_bultos_str)) if n_bultos_str else 0
     except ValueError:
         no_bultos = 0
-    # -----------------------------------------------------------
 
-    # -----------------------------------------------------------
-    # Patrones Ultra-Flexibles para Levante y Fecha de Levante
-    # -----------------------------------------------------------
+    # Patrones robustos para Levante y Fecha de Levante
     levante_no = campo("Levante No.", r"134\.?\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]{5,30})")
     if not levante_no:
         levante_no = campo("Levante No.", r"Levante\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9A-Za-z\-_]{6,30})")
     if not levante_no:
-        # Búsqueda amplia en bloques finales de levante
-        m_lev = re.search(r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?)?\s*([0-9]{8,15})", texto, re.IGNORECASE)
+        m_lev = re.search(r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?)?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
         if m_lev:
             levante_no = m_lev.group(1).strip()
+            if "Levante No." in faltantes:
+                faltantes.remove("Levante No.")
 
     fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
     if not fecha_levante:
-        # Buscar fechas con formato estándar en todo el texto si la casilla explícita falla
-        m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto)
+        m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo)
         if m_fec:
             fecha_levante = m_fec.group(1)
+            if "Fecha del Levante" in faltantes:
+                faltantes.remove("Fecha del Levante")
 
     if fecha_levante:
         fecha_levante = re.sub(r"\s+", "", fecha_levante)
@@ -223,12 +232,12 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
     total = max(len(tareas), 1)
     for i, (nombre_pdf, data) in enumerate(tareas, start=1):
         try:
-            texto = extraer_texto_pdf(data)
-            dim_chunks = dividir_dims(texto)
+            texto_completo = extraer_texto_pdf(data)
+            dim_chunks = dividir_dims(texto_completo)
             if not dim_chunks:
-                dim_chunks = [texto]
+                dim_chunks = [texto_completo]
             for chunk in dim_chunks:
-                fila = extraer_campos_dim(chunk, nombre_pdf)
+                fila = extraer_campos_dim(chunk, texto_completo, nombre_pdf)
                 filas.append(fila)
         except Exception as exc: 
             fila = {c: "" for c in COLUMNAS}
