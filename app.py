@@ -53,29 +53,38 @@ COLUMNAS = [
     "Campos_no_encontrados",
 ]
 
-MONTO = r"\d{1,3}(?:\.\d{3})*\.\d{2}"
-ENTERO_MILES = r"\d{1,3}(?:\.\d{3})*"
+MONTO = r"\d{1,3}(?:\.\d{3})*[\.,]\d{2}|\d+(?:[\.,]\d+)?"
+ENTERO_MILES = r"\d{1,3}(?:\.\d{3})*|\d+"
 
 # --------------------------------------------------------------------------
 # Funciones Matemáticas y de Limpieza
 # --------------------------------------------------------------------------
 
 def limpiar_monto(val_str):
-    """Convierte los montos en formato string DIAN (ej. 1.638.00) a float nativo."""
+    """Convierte los montos de la DIAN a float nativo de forma limpia y directa."""
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
     
-    # Maneja formato #.###.## donde el último punto es decimal
-    if '.' in val_str:
+    # Limpieza de caracteres extraños o letras de relleno típicas de la DIAN
+    val_str = re.sub(r'[^\d.,]', '', val_str)
+    if not val_str:
+        return 0.0
+
+    # Si usa coma como decimal y punto como miles
+    if ',' in val_str and '.' in val_str:
+        if val_str.rfind(',') > val_str.rfind('.'):
+            val_str = val_str.replace('.', '').replace(',', '.')
+        else:
+            val_str = val_str.replace(',', '')
+    elif ',' in val_str:
+        val_str = val_str.replace(',', '.')
+    elif val_str.count('.') > 1:
         partes = val_str.rsplit('.', 1)
-        try:
-            return float(partes[0].replace('.', '') + '.' + partes[1])
-        except ValueError:
-            pass
-    
+        val_str = partes[0].replace('.', '') + '.' + partes[1]
+
     try:
-        return float(re.sub(r'[^\d]', '', val_str))
+        return float(val_str)
     except ValueError:
         return 0.0
 
@@ -107,9 +116,9 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
         return " ".join(valor.split())
 
     numero_formulario = campo("Número de formulario", r"4\s*\.\s*N[uú]mero de formulario\s*\n?\s*(\S+)")
-    nit_importador = campo("NIT Importador", r"5\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9})")
+    nit_importador = campo("NIT Importador", r"5\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9,10})")
     razon_social = campo("Razón Social Importador", r"11\s*\.\s*Apellidos y nombres o Raz[oó]n Social\s*([^\n]+)")
-    nit_declarante = campo("NIT Declarante", r"24\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9})")
+    nit_declarante = campo("NIT Declarante", r"24\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9,10})")
     factura = campo("Factura", r"51\s*\.\s*No\.\s*de\s*factura\s*\n\s*(\S+)")
     
     cod_pais_procedencia = campo("Cod. País Procedencia", r"53\s*\.\s*(?:C[oó]d\.?\s*)?pa[ií]s\s+(?:de\s+)?procedencia\s*([A-Za-z0-9]{2,3})")
@@ -118,11 +127,11 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
     tasa_cambio = campo("Tasa de Cambio", r"Tasa de cambio\s*\$?\s*cvs\.?\s*\n?\s*([\d.,]+)")
     subpartida = campo("Subpartida Arancelaria", r"59\s*\.\s*Subpartida arancelaria\s*(\d{10})")
     cod_pais_origen = campo("Cod. País Origen", r"66\s*\.\s*(?:C[oó]d\.?\s*)?pa[ií]s\s+(?:de\s+)?origen\s*([A-Za-z0-9]{2,3})")
-    cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{3})")
+    cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
     # -----------------------------------------------------------
-    # Extracción y conversión de NUMEROS NATIVOS (Floats e Ints)
+    # Extracción y conversión de valores numéricos limpios
     # -----------------------------------------------------------
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
@@ -131,19 +140,23 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
     
     n_bultos_str = campo("No. Bultos", r"74\s*\.\s*No\.\s*bultos\s*(" + ENTERO_MILES + ")")
     try:
-        no_bultos = int(n_bultos_str.replace(".", "")) if n_bultos_str else 0
+        no_bultos = int(re.sub(r'[^\d]', '', n_bultos_str)) if n_bultos_str else 0
     except ValueError:
         no_bultos = 0
     # -----------------------------------------------------------
 
-    # Restringido para que exija mínimo 10 caracteres y evite atrapar el "135" de la fecha
-    levante_no = campo("Levante No.", r"134\s*\.\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]{10,25})")
-    
-    # Tolerancia total a saltos de línea y texto basura antes de la fecha
-    fecha_levante = campo("Fecha del Levante", r"135\s*\.\s*Fecha(?:[^\d\n]{0,20})\n?\s*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
+    # Patrones mejorados y flexibles para Levante y Fecha de Levante
+    levante_no = campo("Levante No.", r"134\.?\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]{5,30})")
+    if not levante_no:
+        levante_no = campo("Levante No.", r"Levante\s+No\.?\s*([A-Za-z0-9\-_]{5,30})")
+
+    fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
+    if not fecha_levante:
+        fecha_levante = campo("Fecha del Levante", r"(?:\b20\d{2}[-/\.]\d{2}[-/\.]\d{2}\b)")
+        
     if fecha_levante:
-        fecha_levante = re.sub(r"\s+", "", fecha_levante) # Quita espacios
-        fecha_levante = re.sub(r"[/.]", "-", fecha_levante) # Normaliza a formato YYYY-MM-DD
+        fecha_levante = re.sub(r"\s+", "", fecha_levante)
+        fecha_levante = re.sub(r"[/.]", "-", fecha_levante)
 
     return {
         "Número de formulario": numero_formulario,
@@ -238,7 +251,6 @@ def generar_excel(df: pd.DataFrame) -> bytes:
     buffer = io.BytesIO()
     df_export = df.copy()
 
-    # Añadir fila de totales usando operaciones matemáticas nativas
     if not df_export.empty:
         total_row = {c: "" for c in df_export.columns}
         total_row["Número de formulario"] = "TOTALES CONSOLIDADOS"
@@ -270,11 +282,9 @@ def generar_excel(df: pd.DataFrame) -> bytes:
                 celda.border = THIN_BORDER
                 celda.alignment = Alignment(vertical="top", wrap_text=True)
                 
-                # Asignar formato de número/moneda nativo de Excel si es float o int
                 if isinstance(celda.value, (int, float)):
                     celda.number_format = '#,##0.00'
                     
-                # Resaltar la fila final de totales
                 if row_idx == n_filas + 1:
                     celda.fill = TOTAL_FILL
                     celda.font = Font(bold=True)
@@ -298,7 +308,6 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 
 st.title("🧾 Procesador Masivo de Declaraciones de Importación (DIM)")
 st.caption("Formulario 500 DIAN · Extracción automática de 20 campos estandarizados desde PDF")
-st.info("ℹ️ Si un mismo PDF contiene varias declaraciones seguidas, la app las detecta automáticamente y genera una fila por cada declaración.", icon="ℹ️")
 
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
@@ -339,7 +348,6 @@ df = st.session_state.df_resultado_dim
 if not df.empty:
     st.subheader("2. Resultados y Consolidado")
 
-    # ----- MÉTRICAS DE TOTALES -----
     st.markdown("##### 📊 Totales de la extracción actual")
     cols_totales = st.columns(4)
     
@@ -353,7 +361,6 @@ if not df.empty:
     cols_totales[2].metric("Total Peso Bruto (Kgs)", f"{total_peso_bruto:,.2f}")
     cols_totales[3].metric("Total Peso Neto (Kgs)", f"{total_peso_neto:,.2f}")
     st.divider()
-    # -------------------------------
 
     busqueda = st.text_input("🔍 Buscar en todos los campos", "")
 
@@ -362,7 +369,6 @@ if not df.empty:
         mask = df_vista.apply(lambda fila: fila.astype(str).str.contains(busqueda, case=False, na=False).any(), axis=1)
         df_vista = df_vista[mask]
 
-    # Formateo visual en la UI de Streamlit
     st.dataframe(
         df_vista, 
         use_container_width=True, 
