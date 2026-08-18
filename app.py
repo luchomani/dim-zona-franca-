@@ -2,7 +2,7 @@
 """
 Procesador Masivo de Declaraciones de Importación (DIM - Formulario 500 DIAN)
 ================================================================================
-App Streamlit con parser numérico avanzado anti-puntos/comas y extracción robusta.
+App Streamlit con parser numérico avanzado y detección de Actas de Inspección.
 """
 
 import io
@@ -45,6 +45,7 @@ COLUMNAS = [
     "No. Bultos",
     "Valor FOB (USD)",
     "Sumatoria Fletes/Seguros/Otros (USD)",
+    "Acta de Inspección No.",
     "Levante No.",
     "Fecha del Levante",
     "Archivo",
@@ -59,34 +60,21 @@ ENTERO_MILES = r"[\d\.,]+"
 # --------------------------------------------------------------------------
 
 def limpiar_monto(val_str):
-    """
-    Convierte montos de la DIAN manejando correctamente estructuras complejas
-    con múltiples puntos (ej: 1.860.00 -> 1860.0, 262.50 -> 262.5, 2.364.965 -> 2364965.0).
-    """
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
-    
-    # Conservar solo dígitos, puntos y comas
     val_str = re.sub(r'[^\d.,]', '', val_str)
     if not val_str:
         return 0.0
 
-    # Si hay coma, se asume separador decimal estándar latino
     if ',' in val_str:
         val_str = val_str.replace('.', '').replace(',', '.')
     else:
-        # Solo puntos presentes
         partes = val_str.split('.')
-        if len(partes) == 1:
-            pass
-        elif len(partes) == 2:
-            # Si la segunda parte tiene exactamente 2 dígitos, actúa como decimal (ej: 262.50)
-            # Excepción: si es de la forma 1.860 donde la parte entera es pequeña y tiene 3 dígitos, es miles.
+        if len(partes) == 2:
             if len(partes[1]) == 3 and len(partes[0]) <= 3:
                 val_str = val_str.replace('.', '')
         elif len(partes) > 2:
-            # Múltiples puntos (ej: 1.860.00). Si la última parte tiene 2 dígitos, es decimal.
             if len(partes[-1]) == 2:
                 val_str = "".join(partes[:-1]) + "." + partes[-1]
             else:
@@ -120,7 +108,6 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     def campo(nombre, patron, grupo=1, default=""):
         valor = _buscar(patron, chunk_texto, grupo=grupo)
         if not valor:
-            # Intentar búsqueda global en todo el texto si falla en el chunk
             valor = _buscar(patron, texto_completo, grupo=grupo)
         if not valor:
             faltantes.append(nombre)
@@ -139,10 +126,9 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     tasa_cambio = campo("Tasa de Cambio", r"Tasa de cambio\s*\$?\s*cvs\.?\s*\n?\s*([\d.,]+)")
     subpartida = campo("Subpartida Arancelaria", r"59\s*\.\s*Subpartida arancelaria\s*(\d{10})")
     cod_pais_origen = campo("Cod. País Origen", r"66\s*\.\s*(?:C[oó]d\.?\s*)?pa[ií]s\s+(?:de\s+)?origen\s*([A-Za-z0-9]{2,3})")
-    cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
+    cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\s*\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
-    # Extracción y limpieza estricta de montos
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
@@ -154,17 +140,27 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     except ValueError:
         no_bultos = 0
 
-    # Patrones robustos para Levante y Fecha de Levante
-    levante_no = campo("Levante No.", r"134\.?\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]{5,30})")
-    if not levante_no:
-        levante_no = campo("Levante No.", r"Levante\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9A-Za-z\-_]{6,30})")
-    if not levante_no:
-        m_lev = re.search(r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?)?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
-        if m_lev:
-            levante_no = m_lev.group(1).strip()
-            if "Levante No." in faltantes:
-                faltantes.remove("Levante No.")
+    # Extracción robusta de Acta de Inspección (Validando que sean solo dígitos)
+    acta_inspeccion = ""
+    m_acta = re.search(r"ACTA\s+DE\s+INSPECCI[OÓ]N\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
+    if m_acta:
+        acta_inspeccion = m_acta.group(1).strip()
 
+    # Extracción robusta de Levante (Obligando formato numérico estricto de 8 a 15 dígitos)
+    levante_no = ""
+    m_lev_box = re.search(r"134\.?\s*Levante\s+No\.?\s*([0-9]{8,15})", chunk_texto, re.IGNORECASE)
+    if m_lev_box:
+        levante_no = m_lev_box.group(1).strip()
+    
+    if not levante_no:
+        m_lev_gen = re.search(r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
+        if m_lev_gen:
+            levante_no = m_lev_gen.group(1).strip()
+
+    if not levante_no:
+        faltantes.append("Levante No.")
+
+    # Extracción de Fecha de Levante
     fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
     if not fecha_levante:
         m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo)
@@ -196,6 +192,7 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
         "No. Bultos": no_bultos,
         "Valor FOB (USD)": valor_fob,
         "Sumatoria Fletes/Seguros/Otros (USD)": sumatoria_fletes,
+        "Acta de Inspección No.": acta_inspeccion,
         "Levante No.": levante_no,
         "Fecha del Levante": fecha_levante,
         "Archivo": nombre_archivo,
@@ -326,7 +323,7 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 # --------------------------------------------------------------------------
 
 st.title("🧾 Procesador Masivo de Declaraciones de Importación (DIM)")
-st.caption("Formulario 500 DIAN · Extracción automática de 20 campos estandarizados desde PDF")
+st.caption("Formulario 500 DIAN · Extracción automática con detección de Actas de Inspección")
 
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
