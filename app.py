@@ -60,11 +60,11 @@ ENTERO_MILES = r"\d{1,3}(?:\.\d{3})*"
 # Funciones Matemáticas y de Limpieza
 # --------------------------------------------------------------------------
 
-def limpiar_monto(val):
-    """Convierte los montos en formato string DIAN a float para sumarlos."""
-    if not val or pd.isna(val):
+def limpiar_monto(val_str):
+    """Convierte los montos en formato string DIAN (ej. 1.638.00) a float nativo."""
+    if not val_str:
         return 0.0
-    val_str = str(val).strip()
+    val_str = str(val_str).strip()
     
     # Maneja formato #.###.## donde el último punto es decimal
     if '.' in val_str:
@@ -112,7 +112,6 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
     nit_declarante = campo("NIT Declarante", r"24\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9})")
     factura = campo("Factura", r"51\s*\.\s*No\.\s*de\s*factura\s*\n\s*(\S+)")
     
-    # Patrones FLEXIBILIZADOS (Campos 53, 55, 66, 134, 135)
     cod_pais_procedencia = campo("Cod. País Procedencia", r"53\s*\.\s*(?:C[oó]d\.?\s*)?pa[ií]s\s+(?:de\s+)?procedencia\s*([A-Za-z0-9]{2,3})")
     cod_modo_transporte = campo("Cod. Modo Transporte", r"54\s*\.\s*Cod\.\s*Modo\s*Transporte\s*(\d)")
     codigo_bandera = campo("Código de Bandera", r"55\s*\.\s*C[oó]digo\s+(?:de\s+)?bandera\s*([A-Za-z0-9]{2,3})")
@@ -120,17 +119,31 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
     subpartida = campo("Subpartida Arancelaria", r"59\s*\.\s*Subpartida arancelaria\s*(\d{10})")
     cod_pais_origen = campo("Cod. País Origen", r"66\s*\.\s*(?:C[oó]d\.?\s*)?pa[ií]s\s+(?:de\s+)?origen\s*([A-Za-z0-9]{2,3})")
     cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{3})")
-    peso_bruto = campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")")
-    peso_neto = campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")")
-    codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Z]{1,4})")
-    no_bultos = campo("No. Bultos", r"74\s*\.\s*No\.\s*bultos\s*(" + ENTERO_MILES + ")")
-    valor_fob = campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")")
-    sumatoria_fletes = campo("Sumatoria Fletes/Seguros/Otros (USD)", r"82\s*\.\s*Sumatoria de fletes,?\s*seguros\s*\n?\s*y otros gastos USD\s*(" + MONTO + ")")
-    levante_no = campo("Levante No.", r"134\s*\.\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]+)")
-    fecha_levante = campo("Fecha del Levante", r"135\s*\.\s*Fecha\s*\n?\s*([\d]{2,4}[-/\.][\d]{2}[-/\.][\d]{2,4})")
+    codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
+    # -----------------------------------------------------------
+    # Extracción y conversión de NUMEROS NATIVOS (Floats e Ints)
+    # -----------------------------------------------------------
+    peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
+    peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
+    valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
+    sumatoria_fletes = limpiar_monto(campo("Sumatoria Fletes/Seguros/Otros (USD)", r"82\s*\.\s*Sumatoria de fletes,?\s*seguros\s*\n?\s*y otros gastos USD\s*(" + MONTO + ")"))
+    
+    n_bultos_str = campo("No. Bultos", r"74\s*\.\s*No\.\s*bultos\s*(" + ENTERO_MILES + ")")
+    try:
+        no_bultos = int(n_bultos_str.replace(".", "")) if n_bultos_str else 0
+    except ValueError:
+        no_bultos = 0
+    # -----------------------------------------------------------
+
+    # Restringido para que exija mínimo 10 caracteres y evite atrapar el "135" de la fecha
+    levante_no = campo("Levante No.", r"134\s*\.\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]{10,25})")
+    
+    # Tolerancia total a saltos de línea y texto basura antes de la fecha
+    fecha_levante = campo("Fecha del Levante", r"135\s*\.\s*Fecha(?:[^\d\n]{0,20})\n?\s*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
     if fecha_levante:
-        fecha_levante = re.sub(r"\s*-\s*", "-", fecha_levante)
+        fecha_levante = re.sub(r"\s+", "", fecha_levante) # Quita espacios
+        fecha_levante = re.sub(r"[/.]", "-", fecha_levante) # Normaliza a formato YYYY-MM-DD
 
     return {
         "Número de formulario": numero_formulario,
@@ -208,7 +221,7 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
     return pd.DataFrame(filas, columns=COLUMNAS)
 
 # --------------------------------------------------------------------------
-# Exportación a Excel formateado (CON TOTALES)
+# Exportación a Excel formateado (CON TOTALES Y FORMATO NÚMERICO)
 # --------------------------------------------------------------------------
 
 HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -225,14 +238,15 @@ def generar_excel(df: pd.DataFrame) -> bytes:
     buffer = io.BytesIO()
     df_export = df.copy()
 
-    # Añadir fila de totales al DataFrame a exportar
+    # Añadir fila de totales usando operaciones matemáticas nativas
     if not df_export.empty:
         total_row = {c: "" for c in df_export.columns}
         total_row["Número de formulario"] = "TOTALES CONSOLIDADOS"
-        total_row["Valor FOB (USD)"] = f"{sum(limpiar_monto(x) for x in df_export['Valor FOB (USD)']):,.2f}"
-        total_row["Sumatoria Fletes/Seguros/Otros (USD)"] = f"{sum(limpiar_monto(x) for x in df_export['Sumatoria Fletes/Seguros/Otros (USD)']):,.2f}"
-        total_row["Peso Bruto (Kgs)"] = f"{sum(limpiar_monto(x) for x in df_export['Peso Bruto (Kgs)']):,.2f}"
-        total_row["Peso Neto (Kgs)"] = f"{sum(limpiar_monto(x) for x in df_export['Peso Neto (Kgs)']):,.2f}"
+        total_row["Valor FOB (USD)"] = df_export["Valor FOB (USD)"].sum()
+        total_row["Sumatoria Fletes/Seguros/Otros (USD)"] = df_export["Sumatoria Fletes/Seguros/Otros (USD)"].sum()
+        total_row["Peso Bruto (Kgs)"] = df_export["Peso Bruto (Kgs)"].sum()
+        total_row["Peso Neto (Kgs)"] = df_export["Peso Neto (Kgs)"].sum()
+        total_row["No. Bultos"] = df_export["No. Bultos"].sum()
         
         df_export = pd.concat([df_export, pd.DataFrame([total_row])], ignore_index=True)
 
@@ -255,6 +269,11 @@ def generar_excel(df: pd.DataFrame) -> bytes:
                 celda = ws.cell(row=row_idx, column=col_idx)
                 celda.border = THIN_BORDER
                 celda.alignment = Alignment(vertical="top", wrap_text=True)
+                
+                # Asignar formato de número/moneda nativo de Excel si es float o int
+                if isinstance(celda.value, (int, float)):
+                    celda.number_format = '#,##0.00'
+                    
                 # Resaltar la fila final de totales
                 if row_idx == n_filas + 1:
                     celda.fill = TOTAL_FILL
@@ -324,10 +343,10 @@ if not df.empty:
     st.markdown("##### 📊 Totales de la extracción actual")
     cols_totales = st.columns(4)
     
-    total_fob = sum(limpiar_monto(x) for x in df["Valor FOB (USD)"])
-    total_fletes = sum(limpiar_monto(x) for x in df["Sumatoria Fletes/Seguros/Otros (USD)"])
-    total_peso_bruto = sum(limpiar_monto(x) for x in df["Peso Bruto (Kgs)"])
-    total_peso_neto = sum(limpiar_monto(x) for x in df["Peso Neto (Kgs)"])
+    total_fob = df["Valor FOB (USD)"].sum()
+    total_fletes = df["Sumatoria Fletes/Seguros/Otros (USD)"].sum()
+    total_peso_bruto = df["Peso Bruto (Kgs)"].sum()
+    total_peso_neto = df["Peso Neto (Kgs)"].sum()
 
     cols_totales[0].metric("Total Valor FOB (USD)", f"${total_fob:,.2f}")
     cols_totales[1].metric("Total Fletes/Seguros (USD)", f"${total_fletes:,.2f}")
@@ -343,7 +362,19 @@ if not df.empty:
         mask = df_vista.apply(lambda fila: fila.astype(str).str.contains(busqueda, case=False, na=False).any(), axis=1)
         df_vista = df_vista[mask]
 
-    st.dataframe(df_vista, use_container_width=True, height=420)
+    # Formateo visual en la UI de Streamlit
+    st.dataframe(
+        df_vista, 
+        use_container_width=True, 
+        height=420,
+        column_config={
+            "Valor FOB (USD)": st.column_config.NumberColumn(format="%.2f"),
+            "Sumatoria Fletes/Seguros/Otros (USD)": st.column_config.NumberColumn(format="%.2f"),
+            "Peso Bruto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
+            "Peso Neto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
+            "No. Bultos": st.column_config.NumberColumn(format="%d"),
+        }
+    )
 
     faltantes_totales = df[df["Campos_no_encontrados"] != ""]
     if not faltantes_totales.empty:
