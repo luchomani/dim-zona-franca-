@@ -2,7 +2,8 @@
 """
 Procesador Masivo de Declaraciones de Importación (DIM - Formulario 500 DIAN)
 ================================================================================
-App Streamlit con parser numérico avanzado y detección de Actas de Inspección.
+App Streamlit con parser numérico avanzado, detección de Actas de Inspección
+y validación y limpieza estricta anti-duplicados.
 """
 
 import io
@@ -56,7 +57,7 @@ MONTO = r"[\d\.,]+"
 ENTERO_MILES = r"[\d\.,]+"
 
 # --------------------------------------------------------------------------
-# Parser Numérico Avanzado (Manejo exacto de puntos y comas DIAN)
+# Parser Numérico Avanzado
 # --------------------------------------------------------------------------
 
 def limpiar_monto(val_str):
@@ -140,13 +141,11 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     except ValueError:
         no_bultos = 0
 
-    # Extracción robusta de Acta de Inspección (Validando que sean solo dígitos)
     acta_inspeccion = ""
     m_acta = re.search(r"ACTA\s+DE\s+INSPECCI[OÓ]N\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
     if m_acta:
         acta_inspeccion = m_acta.group(1).strip()
 
-    # Extracción robusta de Levante (Obligando formato numérico estricto de 8 a 15 dígitos)
     levante_no = ""
     m_lev_box = re.search(r"134\.?\s*Levante\s+No\.?\s*([0-9]{8,15})", chunk_texto, re.IGNORECASE)
     if m_lev_box:
@@ -160,7 +159,6 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     if not levante_no:
         faltantes.append("Levante No.")
 
-    # Extracción de Fecha de Levante
     fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
     if not fecha_levante:
         m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo)
@@ -247,7 +245,26 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
     if not filas:
         return pd.DataFrame(columns=COLUMNAS)
 
-    return pd.DataFrame(filas, columns=COLUMNAS)
+    df = pd.DataFrame(filas, columns=COLUMNAS)
+
+    # ======================================================================
+    # VALIDACIÓN Y ELIMINACIÓN ESTRICTA DE DUPLICADOS
+    # ======================================================================
+    if "Número de formulario" in df.columns:
+        # 1. Convertir a texto y limpiar espacios en blanco alrededor
+        df["Número de formulario"] = df["Número de formulario"].astype(str).str.strip()
+        
+        # 2. Descartar registros vacíos, nulos o con texto inválido
+        df = df[
+            df["Número de formulario"].notna() & 
+            (df["Número de formulario"] != "") & 
+            (df["Número de formulario"].str.lower() != "nan")
+        ]
+        
+        # 3. Eliminar duplicados manteniendo la última ocurrencia procesada
+        df = df.drop_duplicates(subset=["Número de formulario"], keep="last").reset_index(drop=True)
+
+    return df
 
 # --------------------------------------------------------------------------
 # Exportación a Excel y CSV
@@ -323,7 +340,7 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 # --------------------------------------------------------------------------
 
 st.title("🧾 Procesador Masivo de Declaraciones de Importación (DIM)")
-st.caption("Formulario 500 DIAN · Extracción automática con detección de Actas de Inspección")
+st.caption("Formulario 500 DIAN · Extracción con Actas de Inspección y Control Anti-Duplicados")
 
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
@@ -353,7 +370,7 @@ if procesar:
 
         progreso.empty()
         st.session_state.df_resultado_dim = df
-        st.success(f"✅ Procesamiento completado. {len(df)} declaración(es) extraída(s).")
+        st.success(f"✅ Procesamiento completado. {len(df)} declaración(es) única(s) extraída(s).")
 
 # --------------------------------------------------------------------------
 # Resultados y Totales
