@@ -2,9 +2,7 @@
 """
 Procesador Masivo de Declaraciones de Importación (DIM - Formulario 500 DIAN)
 ================================================================================
-App Streamlit para cargar PDFs sueltos o ZIPs con múltiples PDFs de
-Declaraciones de Importación, extraer 20 campos estandarizados mediante RegEx
-y exportar el resultado a Excel (.xlsx) formateado y CSV.
+App Streamlit optimizada para la extracción robusta de campos y formato DIAN.
 """
 
 import io
@@ -61,27 +59,29 @@ ENTERO_MILES = r"\d{1,3}(?:\.\d{3})*|\d+"
 # --------------------------------------------------------------------------
 
 def limpiar_monto(val_str):
-    """Convierte los montos de la DIAN a float nativo de forma limpia y directa."""
+    """Convierte los montos de la DIAN a float nativo manejando correctamente puntos y comas."""
     if not val_str:
         return 0.0
     val_str = str(val_str).strip()
     
-    # Limpieza de caracteres extraños o letras de relleno típicas de la DIAN
+    # Eliminar caracteres extraños pero conservar puntos, comas y números
     val_str = re.sub(r'[^\d.,]', '', val_str)
     if not val_str:
         return 0.0
 
-    # Si usa coma como decimal y punto como miles
-    if ',' in val_str and '.' in val_str:
+    # Formato DIAN tipico ej: 1.860.00 o 262.50
+    if '.' in val_str and ',' not in val_str:
+        partes = val_str.split('.')
+        if len(partes) > 2:
+            # Ej: 1.860.00 -> miles con punto y decimales con punto o sin comas
+            val_str = "".join(partes[:-1]) + "." + partes[-1]
+    elif ',' in val_str and '.' in val_str:
         if val_str.rfind(',') > val_str.rfind('.'):
             val_str = val_str.replace('.', '').replace(',', '.')
         else:
             val_str = val_str.replace(',', '')
     elif ',' in val_str:
         val_str = val_str.replace(',', '.')
-    elif val_str.count('.') > 1:
-        partes = val_str.rsplit('.', 1)
-        val_str = partes[0].replace('.', '') + '.' + partes[1]
 
     try:
         return float(val_str)
@@ -131,7 +131,7 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
     # -----------------------------------------------------------
-    # Extracción y conversión de valores numéricos limpios
+    # Extracción y conversión de valores numéricos
     # -----------------------------------------------------------
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
@@ -145,15 +145,25 @@ def extraer_campos_dim(texto: str, nombre_archivo: str) -> dict:
         no_bultos = 0
     # -----------------------------------------------------------
 
-    # Patrones mejorados y flexibles para Levante y Fecha de Levante
+    # -----------------------------------------------------------
+    # Patrones Ultra-Flexibles para Levante y Fecha de Levante
+    # -----------------------------------------------------------
     levante_no = campo("Levante No.", r"134\.?\s*Levante\s+No\.?\s*([A-Za-z0-9\-_]{5,30})")
     if not levante_no:
-        levante_no = campo("Levante No.", r"Levante\s+No\.?\s*([A-Za-z0-9\-_]{5,30})")
+        levante_no = campo("Levante No.", r"Levante\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9A-Za-z\-_]{6,30})")
+    if not levante_no:
+        # Búsqueda amplia en bloques finales de levante
+        m_lev = re.search(r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?)?\s*([0-9]{8,15})", texto, re.IGNORECASE)
+        if m_lev:
+            levante_no = m_lev.group(1).strip()
 
     fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
     if not fecha_levante:
-        fecha_levante = campo("Fecha del Levante", r"(?:\b20\d{2}[-/\.]\d{2}[-/\.]\d{2}\b)")
-        
+        # Buscar fechas con formato estándar en todo el texto si la casilla explícita falla
+        m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto)
+        if m_fec:
+            fecha_levante = m_fec.group(1)
+
     if fecha_levante:
         fecha_levante = re.sub(r"\s+", "", fecha_levante)
         fecha_levante = re.sub(r"[/.]", "-", fecha_levante)
@@ -234,7 +244,7 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
     return pd.DataFrame(filas, columns=COLUMNAS)
 
 # --------------------------------------------------------------------------
-# Exportación a Excel formateado (CON TOTALES Y FORMATO NÚMERICO)
+# Exportación a Excel y CSV
 # --------------------------------------------------------------------------
 
 HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
