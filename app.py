@@ -2,8 +2,7 @@
 """
 Procesador Masivo de Declaraciones de Importación (DIM - Formulario 500 DIAN)
 ================================================================================
-App Streamlit con parser numérico avanzado, detección de Manifiestos, 
-Documentos de Transporte y control anti-duplicados.
+Panel Corporativo Optimizado — Zona Franca
 """
 
 import io
@@ -18,16 +17,93 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 # --------------------------------------------------------------------------
-# Configuración general
+# Configuración general y Estilos Corporativos (CSS)
 # --------------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Procesador de DIM",
-    page_icon="🧾",
+    page_title="Procesador DIM | Zona Franca",
+    page_icon="🏢",
     layout="wide",
 )
 
-# LISTA OFICIAL DE COLUMNAS (Sin NIT Declarante, con Manifiesto y Doc. Transporte)
+st.markdown("""
+<style>
+    /* Paleta Corporativa Zona Franca */
+    :root {
+        --zf-green-dark: #1B4D3E;
+        --zf-green-medium: #2C6B56;
+        --zf-olive: #8A9A28;
+        --zf-bg-light: #F4F7F6;
+        --zf-card-bg: #FFFFFF;
+        --zf-text-main: #2C3E50;
+    }
+
+    /* Fondo general de la aplicación */
+    .stApp {
+        background-color: var(--zf-bg-light);
+    }
+
+    /* Tipografía y Títulos */
+    h1, h2, h3 {
+        color: var(--zf-green-dark) !important;
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    }
+    
+    h1 {
+        font-size: 2.2rem !important;
+        font-weight: 700;
+        border-bottom: 3px solid var(--zf-olive);
+        padding-bottom: 10px;
+    }
+
+    /* Tarjetas de contenedores */
+    div[data-testid="stVerticalBlock"] > div[style*="border"] {
+        background-color: var(--zf-card-bg);
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        border: 1px solid #E1E8E5 !important;
+        padding: 20px;
+    }
+
+    /* Botones principales */
+    .stButton>button {
+        background-color: var(--zf-green-dark);
+        color: white;
+        border-radius: 6px;
+        border: none;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+    }
+
+    .stButton>button:hover {
+        background-color: var(--zf-green-medium);
+        color: white;
+        border: none;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+
+    /* Métricas con acento corporativo */
+    div[data-testid="stMetricValue"] {
+        color: var(--zf-green-dark);
+        font-weight: 700;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #556B2F;
+        font-weight: 600;
+    }
+
+    /* Tablas y DataFrames */
+    .stDataFrame {
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid #E1E8E5;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# LISTA OFICIAL DE COLUMNAS
 COLUMNAS = [
     "Número de formulario",
     "NIT Importador",
@@ -59,7 +135,7 @@ MONTO = r"[\d\.,]+"
 ENTERO_MILES = r"[\d\.,]+"
 
 # --------------------------------------------------------------------------
-# Parser Numérico Avanzado
+# Parser Numérico y Extracción
 # --------------------------------------------------------------------------
 
 def limpiar_monto(val_str):
@@ -87,10 +163,6 @@ def limpiar_monto(val_str):
         return float(val_str)
     except ValueError:
         return 0.0
-
-# --------------------------------------------------------------------------
-# Utilidades de extracción
-# --------------------------------------------------------------------------
 
 def _buscar(patron, texto, flags=re.IGNORECASE, grupo=1):
     m = re.search(patron, texto, flags)
@@ -122,12 +194,10 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     razon_social = campo("Razón Social Importador", r"11\s*\.\s*Apellidos y nombres o Raz[oó]n Social\s*([^\n]+)")
     factura = campo("Factura", r"51\s*\.\s*No\.\s*de\s*factura\s*\n\s*(\S+)")
     
-    # Casilla 42: Manifiesto de carga
     manifiesto_carga = campo("Manifiesto de carga", r"42\s*\.?\s*Manifiesto\s+de\s+carga\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
     if not manifiesto_carga:
         manifiesto_carga = campo("Manifiesto de carga", r"42\s*\.?\s*Manifiesto\s+de\s+carga[^\n]*\n\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
 
-    # Casilla 44: Documento de transporte
     documento_transporte = campo("Documento de transporte", r"44\s*\.?\s*Documento\s+de\s+transporte\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
     if not documento_transporte:
         documento_transporte = campo("Documento de transporte", r"44\s*\.?\s*Documento\s+de\s+transporte[^\n]*\n\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
@@ -277,9 +347,9 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
 # Exportación a Excel y CSV
 # --------------------------------------------------------------------------
 
-HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+HEADER_FILL = PatternFill(start_color="1B4D3E", end_color="1B4D3E", fill_type="solid")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
-TOTAL_FILL = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+TOTAL_FILL = PatternFill(start_color="D9E1D9", end_color="D9E1D9", fill_type="solid")
 THIN_BORDER = Border(
     left=Side(style="thin", color="D9D9D9"),
     right=Side(style="thin", color="D9D9D9"),
@@ -343,19 +413,19 @@ def generar_csv(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False, sep=",", encoding="utf-8-sig").encode("utf-8-sig")
 
 # --------------------------------------------------------------------------
-# Interfaz Streamlit
+# Interfaz de Usuario Corporativa (Streamlit)
 # --------------------------------------------------------------------------
 
-st.title("🧾 Procesador Masivo de Declaraciones de Importación (DIM)")
-st.caption("Formulario 500 DIAN · Manifiestos, Documentos de Transporte y Control Anti-Duplicados")
+st.title("🏢 Procesador Masivo de Declaraciones de Importación")
+st.caption("Zona Franca de Cúcuta — Operada por Zona Franca Santander | Módulo de Gestión Aduanera Formulario 500")
 
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
 
-with st.container(border=True):
-    st.subheader("1. Cargar documentos")
+with st.container():
+    st.subheader("1. Carga de Documentación Aduanera")
     uploaded_files = st.file_uploader(
-        "Arrastra aquí archivos PDF individuales o un ZIP con varios PDFs",
+        "Arrastra y suelta tus archivos PDF individuales o paquetes comprimidos en formato .ZIP",
         type=["pdf", "zip"],
         accept_multiple_files=True,
         key="dim_uploader",
@@ -365,7 +435,7 @@ with st.container(border=True):
     with col_btn1:
         procesar = st.button("🚀 Procesar Documentos", type="primary", use_container_width=True)
     with col_btn2:
-        limpiar = st.button("🧹 Limpiar y Empezar de Nuevo", use_container_width=True)
+        limpiar = st.button("🧹 Limpiar y Reiniciar Panel", use_container_width=True)
 
 if limpiar:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
@@ -375,30 +445,30 @@ if limpiar:
 
 if procesar:
     if not uploaded_files:
-        st.warning("Por favor carga al menos un archivo PDF o ZIP antes de procesar.")
+        st.warning("Por favor carga al menos un archivo PDF o ZIP antes de ejecutar el procesamiento.")
     else:
-        progreso = st.progress(0.0, text="Iniciando procesamiento...")
+        progreso = st.progress(0.0, text="Iniciando motor de extracción...")
 
         def _cb(pct, nombre):
-            progreso.progress(pct, text=f"Procesando: {nombre}")
+            progreso.progress(pct, text=f"Procesando archivo: {nombre}")
 
-        with st.spinner("Extrayendo información de las declaraciones..."):
+        with st.spinner("Analizando y extrayendo campos clave de las DIMs..."):
             df = procesar_archivos(uploaded_files, progress_callback=_cb)
 
         progreso.empty()
         st.session_state.df_resultado_dim = df
-        st.success(f"✅ Procesamiento completado. {len(df)} declaración(es) única(s) extraída(s).")
+        st.success(f"✅ Extracción exitosa. Se han consolidado {len(df)} declaración(es) única(s).")
 
 # --------------------------------------------------------------------------
-# Resultados y Totales
+# Visualización de Resultados y Métricas Corporativas
 # --------------------------------------------------------------------------
 
 df = st.session_state.df_resultado_dim
 
 if not df.empty:
-    st.subheader("2. Resultados y Consolidado")
+    st.markdown("---")
+    st.subheader("2. Consolidado y Analítica de Carga")
 
-    st.markdown("##### 📊 Totales de la extracción actual")
     cols_totales = st.columns(4)
     
     total_fob = df["Valor FOB (USD)"].sum()
@@ -410,9 +480,10 @@ if not df.empty:
     cols_totales[1].metric("Total Fletes/Seguros (USD)", f"${total_fletes:,.2f}")
     cols_totales[2].metric("Total Peso Bruto (Kgs)", f"{total_peso_bruto:,.2f}")
     cols_totales[3].metric("Total Peso Neto (Kgs)", f"{total_peso_neto:,.2f}")
-    st.divider()
+    
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    busqueda = st.text_input("🔍 Buscar en todos los campos", "")
+    busqueda = st.text_input("🔍 Búsqueda rápida en el consolidado (Formulario, NIT, Importador, Manifiesto...)", "")
 
     df_vista = df.copy()
     if busqueda:
@@ -434,34 +505,35 @@ if not df.empty:
 
     faltantes_totales = df[df["Campos_no_encontrados"] != ""]
     if not faltantes_totales.empty:
-        with st.expander(f"⚠️ {len(faltantes_totales)} declaración(es) con campos no detectados (revisión manual)"):
+        with st.expander(f"⚠️ {len(faltantes_totales)} declaración(es) requieren revisión manual de campos"):
             st.dataframe(faltantes_totales[["Número de formulario", "Archivo", "Campos_no_encontrados"]], use_container_width=True)
 
-    with st.expander("👁️ Vista previa de una declaración"):
+    with st.expander("👁️ Inspección detallada por Formulario"):
         opciones = (df["Número de formulario"] + " — " + df["Archivo"]).tolist()
-        seleccion = st.selectbox("Selecciona una declaración", opciones)
+        seleccion = st.selectbox("Selecciona una declaración para ver su estructura completa", opciones)
         idx = opciones.index(seleccion)
         st.json(df.iloc[idx].to_dict())
 
-    st.subheader("3. Descargar resultados")
+    st.markdown("---")
+    st.subheader("3. Exportación de Datos")
     df_export = df.drop(columns=["Campos_no_encontrados"])
 
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
-            "⬇️ Descargar Excel (.xlsx)",
+            "⬇️ Descargar Reporte en Excel (.xlsx)",
             data=generar_excel(df_export),
-            file_name=f"dim_procesadas_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
     with col2:
         st.download_button(
-            "⬇️ Descargar CSV (.csv)",
+            "⬇️ Descargar Reporte en CSV (.csv)",
             data=generar_csv(df_export),
-            file_name=f"dim_procesadas_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
             use_container_width=True,
         )
 else:
-    st.info("Carga tus archivos PDF/ZIP y presiona **Procesar Documentos** para ver los resultados aquí.")
+    st.info("Carga tus documentos aduaneros para activar el panel de análisis y las métricas corporativas.")
