@@ -361,7 +361,6 @@ with st.container(border=True):
         key="dim_uploader",
     )
 
-    # Botones organizados en dos columnas (Procesar y Limpiar)
     col_btn1, col_btn2 = st.columns(2)
     with col_btn1:
         procesar = st.button("🚀 Procesar Documentos", type="primary", use_container_width=True)
@@ -460,7 +459,7 @@ if not df.empty:
         st.download_button(
             "⬇️ Descargar CSV (.csv)",
             data=generar_csv(df_export),
-            file_name=f"dim_procesadas_{datetime.now'.strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"dim_procesadas_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
             use_container_width=True,
         )
