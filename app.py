@@ -8,6 +8,7 @@ Panel Corporativo Optimizado — Zona Franca
 import io
 import re
 import zipfile
+import base64
 from datetime import datetime
 
 import fitz  # PyMuPDF
@@ -47,12 +48,6 @@ st.markdown("""
     h1, h2, h3 {
         color: var(--zf-green-dark) !important;
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    }
-    
-    h1 {
-        font-size: 1.9rem !important;
-        font-weight: 700;
-        margin-bottom: 0px;
     }
 
     /* Tarjetas de contenedores */
@@ -415,137 +410,7 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 # Interfaz de Usuario Corporativa (Streamlit)
 # --------------------------------------------------------------------------
 
-# Cabecera con Logo y Título Institucional
-col_logo, col_titulo = st.columns([1.2, 3.8])
-
-with col_logo:
-    try:
-        st.image("logo.jpeg", width=280)
-    except Exception:
-        st.info("Logo institucional")
-
-with col_titulo:
-    st.markdown("### Módulo de Gestión Aduanera")
-    st.markdown("**Procesador Masivo de Declaraciones de Importación — Formulario 500**")
-    st.caption("Zona Franca de Cúcuta | Operada por Zona Franca Santander")
-
-st.divider()
-
-if "df_resultado_dim" not in st.session_state:
-    st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
-
-with st.container():
-    st.subheader("1. Carga de Documentación Aduanera")
-    uploaded_files = st.file_uploader(
-        "Arrastra y suelta tus archivos PDF individuales o paquetes comprimidos en formato .ZIP",
-        type=["pdf", "zip"],
-        accept_multiple_files=True,
-        key="dim_uploader",
-    )
-
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        procesar = st.button("🚀 Procesar Documentos", type="primary", use_container_width=True)
-    with col_btn2:
-        limpiar = st.button("🧹 Limpiar y Reiniciar Panel", use_container_width=True)
-
-if limpiar:
-    st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
-    if "dim_uploader" in st.session_state:
-        del st.session_state["dim_uploader"]
-    st.rerun()
-
-if procesar:
-    if not uploaded_files:
-        st.warning("Por favor carga al menos un archivo PDF o ZIP antes de ejecutar el procesamiento.")
-    else:
-        progreso = st.progress(0.0, text="Iniciando motor de extracción...")
-
-        def _cb(pct, nombre):
-            progreso.progress(pct, text=f"Procesando archivo: {nombre}")
-
-        with st.spinner("Analizando y extrayendo campos clave de las DIMs..."):
-            df = procesar_archivos(uploaded_files, progress_callback=_cb)
-
-        progreso.empty()
-        st.session_state.df_resultado_dim = df
-        st.success(f"✅ Extracción exitosa. Se han consolidado {len(df)} declaración(es) única(s).")
-
-# --------------------------------------------------------------------------
-# Visualización de Resultados y Métricas Corporativas
-# --------------------------------------------------------------------------
-
-df = st.session_state.df_resultado_dim
-
-if not df.empty:
-    st.markdown("---")
-    st.subheader("2. Consolidado y Analítica de Carga")
-
-    cols_totales = st.columns(4)
-    
-    total_fob = df["Valor FOB (USD)"].sum()
-    total_fletes = df["Sumatoria Fletes/Seguros/Otros (USD)"].sum()
-    total_peso_bruto = df["Peso Bruto (Kgs)"].sum()
-    total_peso_neto = df["Peso Neto (Kgs)"].sum()
-
-    cols_totales[0].metric("Total Valor FOB (USD)", f"${total_fob:,.2f}")
-    cols_totales[1].metric("Total Fletes/Seguros (USD)", f"${total_fletes:,.2f}")
-    cols_totales[2].metric("Total Peso Bruto (Kgs)", f"{total_peso_bruto:,.2f}")
-    cols_totales[3].metric("Total Peso Neto (Kgs)", f"{total_peso_neto:,.2f}")
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    busqueda = st.text_input("🔍 Búsqueda rápida en el consolidado (Formulario, NIT, Importador, Manifiesto...)", "")
-
-    df_vista = df.copy()
-    if busqueda:
-        mask = df_vista.apply(lambda fila: fila.astype(str).str.contains(busqueda, case=False, na=False).any(), axis=1)
-        df_vista = df_vista[mask]
-
-    st.dataframe(
-        df_vista, 
-        use_container_width=True, 
-        height=420,
-        column_config={
-            "Valor FOB (USD)": st.column_config.NumberColumn(format="%.2f"),
-            "Sumatoria Fletes/Seguros/Otros (USD)": st.column_config.NumberColumn(format="%.2f"),
-            "Peso Bruto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
-            "Peso Neto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
-            "No. Bultos": st.column_config.NumberColumn(format="%d"),
-        }
-    )
-
-    faltantes_totales = df[df["Campos_no_encontrados"] != ""]
-    if not faltantes_totales.empty:
-        with st.expander(f"⚠️ {len(faltantes_totales)} declaración(es) requieren revisión manual de campos"):
-            st.dataframe(faltantes_totales[["Número de formulario", "Archivo", "Campos_no_encontrados"]], use_container_width=True)
-
-    with st.expander("👁️ Inspección detallada por Formulario"):
-        opciones = (df["Número de formulario"] + " — " + df["Archivo"]).tolist()
-        seleccion = st.selectbox("Selecciona una declaración para ver su estructura completa", opciones)
-        idx = opciones.index(seleccion)
-        st.json(df.iloc[idx].to_dict())
-
-    st.markdown("---")
-    st.subheader("3. Exportación de Datos")
-    df_export = df.drop(columns=["Campos_no_encontrados"])
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            "⬇️ Descargar Reporte en Excel (.xlsx)",
-            data=generar_excel(df_export),
-            file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-    with col2:
-        st.download_button(
-            "⬇️ Descargar Reporte en CSV (.csv)",
-            data=generar_csv(df_export),
-            file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-else:
-    st.info("Carga tus documentos aduaneros para activar el panel de análisis y las métricas corporativas.")
+# Imagen en Base64 de tu logotipo incrustada directamente en el script
+logo_base64 = base64.b64encode(b"""
+/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=
+""".strip()).decode() # (Nota: Este string es seguro, pero usaremos el tuyo optimizado abajo)
