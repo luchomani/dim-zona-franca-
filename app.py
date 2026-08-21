@@ -441,16 +441,22 @@ with col_titulo:
 
 st.divider()
 
+# Inicialización de variables de estado
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
 
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
 with st.container():
     st.subheader("1. Carga de Documentación Aduanera")
+    
+    # El key dinámico permite recrear el componente limpiando los archivos cargados
     uploaded_files = st.file_uploader(
         "Arrastra y suelta tus archivos PDF individuales o paquetes comprimidos en formato .ZIP",
         type=["pdf", "zip"],
         accept_multiple_files=True,
-        key="dim_uploader",
+        key=f"dim_uploader_{st.session_state.uploader_key}",
     )
 
     col_btn1, col_btn2 = st.columns(2)
@@ -461,8 +467,7 @@ with st.container():
 
 if limpiar:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
-    if "dim_uploader" in st.session_state:
-        del st.session_state["dim_uploader"]
+    st.session_state.uploader_key += 1  # Incrementa la llave para vaciar el file_uploader
     st.rerun()
 
 if procesar:
