@@ -50,10 +50,9 @@ st.markdown("""
     }
     
     h1 {
-        font-size: 2.2rem !important;
+        font-size: 1.9rem !important;
         font-weight: 700;
-        border-bottom: 3px solid var(--zf-olive);
-        padding-bottom: 10px;
+        margin-bottom: 0px;
     }
 
     /* Tarjetas de contenedores */
@@ -416,8 +415,21 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 # Interfaz de Usuario Corporativa (Streamlit)
 # --------------------------------------------------------------------------
 
-st.title("🏢 Procesador Masivo de Declaraciones de Importación")
-st.caption("Zona Franca de Cúcuta — Operada por Zona Franca Santander | Módulo de Gestión Aduanera Formulario 500")
+# Cabecera con Logo y Título Institucional
+col_logo, col_titulo = st.columns([1.2, 3.8])
+
+with col_logo:
+    try:
+        st.image("logo.jpeg", width=280)
+    except Exception:
+        st.info("Logo institucional")
+
+with col_titulo:
+    st.markdown("### Módulo de Gestión Aduanera")
+    st.markdown("**Procesador Masivo de Declaraciones de Importación — Formulario 500**")
+    st.caption("Zona Franca de Cúcuta | Operada por Zona Franca Santander")
+
+st.divider()
 
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
