@@ -8,6 +8,7 @@ Panel Corporativo Optimizado — Zona Franca
 import io
 import re
 import zipfile
+import os
 import base64
 from datetime import datetime
 
@@ -18,7 +19,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 # --------------------------------------------------------------------------
-# Configuración general y Estilos Corporativos (CSS)
+# Configuración general y Estilos Corporativos con Fondo Personalizado
 # --------------------------------------------------------------------------
 
 st.set_page_config(
@@ -27,40 +28,52 @@ st.set_page_config(
     layout="wide",
 )
 
-st.markdown("""
+fondo_css = ""
+if os.path.exists("Fondo ZFC.png"):
+    with open("Fondo ZFC.png", "rb") as f:
+        fondo_bytes = f.read()
+    fondo_base64 = base64.b64encode(fondo_bytes).decode()
+    fondo_css = f"""
+    .stApp {{
+        background-image: linear-gradient(rgba(244, 247, 246, 0.9), rgba(244, 247, 246, 0.9)), url("data:image/png;base64,{fondo_base64}");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+    }}
+    """
+else:
+    fondo_css = """
+    .stApp {
+        background-color: #F4F7F6;
+    }
+    """
+
+st.markdown(f"""
 <style>
-    /* Paleta Corporativa Zona Franca */
-    :root {
+    :root {{
         --zf-green-dark: #1B4D3E;
         --zf-green-medium: #2C6B56;
         --zf-olive: #8A9A28;
-        --zf-bg-light: #F4F7F6;
         --zf-card-bg: #FFFFFF;
         --zf-text-main: #2C3E50;
-    }
+    }}
 
-    /* Fondo general de la aplicación */
-    .stApp {
-        background-color: var(--zf-bg-light);
-    }
+    {fondo_css}
 
-    /* Tipografía y Títulos */
-    h1, h2, h3 {
+    h1, h2, h3 {{
         color: var(--zf-green-dark) !important;
         font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    }
+    }}
 
-    /* Tarjetas de contenedores */
-    div[data-testid="stVerticalBlock"] > div[style*="border"] {
+    div[data-testid="stVerticalBlock"] > div[style*="border"] {{
         background-color: var(--zf-card-bg);
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         border: 1px solid #E1E8E5 !important;
         padding: 20px;
-    }
+    }}
 
-    /* Botones principales */
-    .stButton>button {
+    .stButton>button {{
         background-color: var(--zf-green-dark);
         color: white;
         border-radius: 6px;
@@ -69,31 +82,29 @@ st.markdown("""
         padding: 0.5rem 1rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         transition: all 0.3s ease;
-    }
+    }}
 
-    .stButton>button:hover {
+    .stButton>button:hover {{
         background-color: var(--zf-green-medium);
         color: white;
         border: none;
         box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-    }
+    }}
 
-    /* Métricas con acento corporativo */
-    div[data-testid="stMetricValue"] {
+    div[data-testid="stMetricValue"] {{
         color: var(--zf-green-dark);
         font-weight: 700;
-    }
-    div[data-testid="stMetricLabel"] {
+    }}
+    div[data-testid="stMetricLabel"] {{
         color: #556B2F;
         font-weight: 600;
-    }
+    }}
 
-    /* Tablas y DataFrames */
-    .stDataFrame {
+    .stDataFrame {{
         border-radius: 8px;
         overflow: hidden;
         border: 1px solid #E1E8E5;
-    }
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -410,7 +421,141 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 # Interfaz de Usuario Corporativa (Streamlit)
 # --------------------------------------------------------------------------
 
-# Imagen en Base64 de tu logotipo incrustada directamente en el script
-logo_base64 = base64.b64encode(b"""
-/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=
-""".strip()).decode() # (Nota: Este string es seguro, pero usaremos el tuyo optimizado abajo)
+col_logo, col_titulo = st.columns([1.3, 3.7])
+
+with col_logo:
+    logo_encontrado = False
+    for filename in ["LOGO ZFS-ZFC.jpeg", "logo.jpeg", "logo.jpg", "logo.png"]:
+        if os.path.exists(filename):
+            st.image(filename, width=240)
+            logo_encontrado = True
+            break
+    
+    if not logo_encontrado:
+        st.info("💡 Sube tu imagen de logo al repositorio como `LOGO ZFS-ZFC.jpeg`.")
+
+with col_titulo:
+    st.markdown("### Módulo de Gestión Aduanera")
+    st.markdown("**Procesador Masivo de Declaraciones de Importación — Formulario 500**")
+    st.caption("Zona Franca de Cúcuta | Operada por Zona Franca Santander")
+
+st.divider()
+
+if "df_resultado_dim" not in st.session_state:
+    st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
+
+with st.container():
+    st.subheader("1. Carga de Documentación Aduanera")
+    uploaded_files = st.file_uploader(
+        "Arrastra y suelta tus archivos PDF individuales o paquetes comprimidos en formato .ZIP",
+        type=["pdf", "zip"],
+        accept_multiple_files=True,
+        key="dim_uploader",
+    )
+
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        procesar = st.button("🚀 Procesar Documentos", type="primary", use_container_width=True)
+    with col_btn2:
+        limpiar = st.button("🧹 Limpiar y Reiniciar Panel", use_container_width=True)
+
+if limpiar:
+    st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
+    if "dim_uploader" in st.session_state:
+        del st.session_state["dim_uploader"]
+    st.rerun()
+
+if procesar:
+    if not uploaded_files:
+        st.warning("Por favor carga al menos un archivo PDF o ZIP antes de ejecutar el procesamiento.")
+    else:
+        progreso = st.progress(0.0, text="Iniciando motor de extracción...")
+
+        def _cb(pct, nombre):
+            progreso.progress(pct, text=f"Procesando archivo: {nombre}")
+
+        with st.spinner("Analizando y extrayendo campos clave de las DIMs..."):
+            df = procesar_archivos(uploaded_files, progress_callback=_cb)
+
+        progreso.empty()
+        st.session_state.df_resultado_dim = df
+        st.success(f"✅ Extracción exitosa. Se han consolidado {len(df)} declaración(es) única(s).")
+
+# --------------------------------------------------------------------------
+# Visualización de Resultados y Métricas Corporativas
+# --------------------------------------------------------------------------
+
+df = st.session_state.df_resultado_dim
+
+if not df.empty:
+    st.markdown("---")
+    st.subheader("2. Consolidado y Analítica de Carga")
+
+    cols_totales = st.columns(4)
+    
+    total_fob = df["Valor FOB (USD)"].sum()
+    total_fletes = df["Sumatoria Fletes/Seguros/Otros (USD)"].sum()
+    total_peso_bruto = df["Peso Bruto (Kgs)"].sum()
+    total_peso_neto = df["Peso Neto (Kgs)"].sum()
+
+    cols_totales[0].metric("Total Valor FOB (USD)", f"${total_fob:,.2f}")
+    cols_totales[1].metric("Total Fletes/Seguros (USD)", f"${total_fletes:,.2f}")
+    cols_totales[2].metric("Total Peso Bruto (Kgs)", f"{total_peso_bruto:,.2f}")
+    cols_totales[3].metric("Total Peso Neto (Kgs)", f"{total_peso_neto:,.2f}")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    busqueda = st.text_input("🔍 Búsqueda rápida en el consolidado (Formulario, NIT, Importador, Manifiesto...)", "")
+
+    df_vista = df.copy()
+    if busqueda:
+        mask = df_vista.apply(lambda fila: fila.astype(str).str.contains(busqueda, case=False, na=False).any(), axis=1)
+        df_vista = df_vista[mask]
+
+    st.dataframe(
+        df_vista, 
+        use_container_width=True, 
+        height=420,
+        column_config={
+            "Valor FOB (USD)": st.column_config.NumberColumn(format="%.2f"),
+            "Sumatoria Fletes/Seguros/Otros (USD)": st.column_config.NumberColumn(format="%.2f"),
+            "Peso Bruto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
+            "Peso Neto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
+            "No. Bultos": st.column_config.NumberColumn(format="%d"),
+        }
+    )
+
+    faltantes_totales = df[df["Campos_no_encontrados"] != ""]
+    if not faltantes_totales.empty:
+        with st.expander(f"⚠️ {len(faltantes_totales)} declaración(es) requieren revisión manual de campos"):
+            st.dataframe(faltantes_totales[["Número de formulario", "Archivo", "Campos_no_encontrados"]], use_container_width=True)
+
+    with st.expander("👁️ Inspección detallada por Formulario"):
+        opciones = (df["Número de formulario"] + " — " + df["Archivo"]).tolist()
+        seleccion = st.selectbox("Selecciona una declaración para ver su estructura completa", opciones)
+        idx = opciones.index(seleccion)
+        st.json(df.iloc[idx].to_dict())
+
+    st.markdown("---")
+    st.subheader("3. Exportación de Datos")
+    df_export = df.drop(columns=["Campos_no_encontrados"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            "⬇️ Descargar Reporte en Excel (.xlsx)",
+            data=generar_excel(df_export),
+            file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    with col2:
+        st.download_button(
+            "⬇️ Descargar Reporte en CSV (.csv)",
+            data=generar_csv(df_export),
+            file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+else:
+    st.info("Carga tus documentos aduaneros para activar el panel de análisis y las métricas corporativas.")
