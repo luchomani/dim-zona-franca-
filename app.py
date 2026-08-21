@@ -2,8 +2,8 @@
 """
 Procesador Masivo de Declaraciones de Importación (DIM - Formulario 500 DIAN)
 ================================================================================
-App Streamlit con parser numérico avanzado, detección de Actas de Inspección
-y validación y limpieza estricta anti-duplicados.
+App Streamlit con parser numérico avanzado, detección de Manifiestos, 
+Documentos de Transporte y control anti-duplicados.
 """
 
 import io
@@ -27,12 +27,14 @@ st.set_page_config(
     layout="wide",
 )
 
+# LISTA OFICIAL DE COLUMNAS (Sin NIT Declarante, con Manifiesto y Doc. Transporte)
 COLUMNAS = [
     "Número de formulario",
     "NIT Importador",
     "Razón Social Importador",
-    "NIT Declarante",
     "Factura",
+    "Manifiesto de carga",
+    "Documento de transporte",
     "Cod. País Procedencia",
     "Cod. Modo Transporte",
     "Código de Bandera",
@@ -118,9 +120,18 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     numero_formulario = campo("Número de formulario", r"4\s*\.\s*N[uú]mero de formulario\s*\n?\s*(\S+)")
     nit_importador = campo("NIT Importador", r"5\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9,10})")
     razon_social = campo("Razón Social Importador", r"11\s*\.\s*Apellidos y nombres o Raz[oó]n Social\s*([^\n]+)")
-    nit_declarante = campo("NIT Declarante", r"24\s*\.\s*N[uú]mero de Identificaci[oó]n Tributaria \(NIT\)\s*(\d{9,10})")
     factura = campo("Factura", r"51\s*\.\s*No\.\s*de\s*factura\s*\n\s*(\S+)")
     
+    # Casilla 42: Manifiesto de carga
+    manifiesto_carga = campo("Manifiesto de carga", r"42\s*\.?\s*Manifiesto\s+de\s+carga\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
+    if not manifiesto_carga:
+        manifiesto_carga = campo("Manifiesto de carga", r"42\s*\.?\s*Manifiesto\s+de\s+carga[^\n]*\n\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
+
+    # Casilla 44: Documento de transporte
+    documento_transporte = campo("Documento de transporte", r"44\s*\.?\s*Documento\s+de\s+transporte\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
+    if not documento_transporte:
+        documento_transporte = campo("Documento de transporte", r"44\s*\.?\s*Documento\s+de\s+transporte[^\n]*\n\s*(?:No\.?\s*)?([A-Za-z0-9\-]+)")
+
     cod_pais_procedencia = campo("Cod. País Procedencia", r"53\s*\.\s*(?:C[oó]d\.?\s*)?pa[ií]s\s+(?:de\s+)?procedencia\s*([A-Za-z0-9]{2,3})")
     cod_modo_transporte = campo("Cod. Modo Transporte", r"54\s*\.\s*Cod\.\s*Modo\s*Transporte\s*(\d)")
     codigo_bandera = campo("Código de Bandera", r"55\s*\.\s*C[oó]digo\s+(?:de\s+)?bandera\s*([A-Za-z0-9]{2,3})")
@@ -175,8 +186,9 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
         "Número de formulario": numero_formulario,
         "NIT Importador": nit_importador,
         "Razón Social Importador": razon_social,
-        "NIT Declarante": nit_declarante,
         "Factura": factura,
+        "Manifiesto de carga": manifiesto_carga,
+        "Documento de transporte": documento_transporte,
         "Cod. País Procedencia": cod_pais_procedencia,
         "Cod. Modo Transporte": cod_modo_transporte,
         "Código de Bandera": codigo_bandera,
@@ -247,22 +259,17 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
 
     df = pd.DataFrame(filas, columns=COLUMNAS)
 
-    # ======================================================================
-    # VALIDACIÓN Y ELIMINACIÓN ESTRICTA DE DUPLICADOS
-    # ======================================================================
     if "Número de formulario" in df.columns:
-        # 1. Convertir a texto y limpiar espacios en blanco alrededor
         df["Número de formulario"] = df["Número de formulario"].astype(str).str.strip()
-        
-        # 2. Descartar registros vacíos, nulos o con texto inválido
         df = df[
             df["Número de formulario"].notna() & 
             (df["Número de formulario"] != "") & 
             (df["Número de formulario"].str.lower() != "nan")
         ]
-        
-        # 3. Eliminar duplicados manteniendo la última ocurrencia procesada
         df = df.drop_duplicates(subset=["Número de formulario"], keep="last").reset_index(drop=True)
+
+    if "Levante No." in df.columns:
+        df["Levante No."] = df["Levante No."].astype(str).str.strip()
 
     return df
 
@@ -340,7 +347,7 @@ def generar_csv(df: pd.DataFrame) -> bytes:
 # --------------------------------------------------------------------------
 
 st.title("🧾 Procesador Masivo de Declaraciones de Importación (DIM)")
-st.caption("Formulario 500 DIAN · Extracción con Actas de Inspección y Control Anti-Duplicados")
+st.caption("Formulario 500 DIAN · Manifiestos, Documentos de Transporte y Control Anti-Duplicados")
 
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
@@ -354,7 +361,18 @@ with st.container(border=True):
         key="dim_uploader",
     )
 
-    procesar = st.button("🚀 Procesar Documentos", type="primary", use_container_width=True)
+    # Botones organizados en dos columnas (Procesar y Limpiar)
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        procesar = st.button("🚀 Procesar Documentos", type="primary", use_container_width=True)
+    with col_btn2:
+        limpiar = st.button("🧹 Limpiar y Empezar de Nuevo", use_container_width=True)
+
+if limpiar:
+    st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
+    if "dim_uploader" in st.session_state:
+        del st.session_state["dim_uploader"]
+    st.rerun()
 
 if procesar:
     if not uploaded_files:
@@ -442,7 +460,7 @@ if not df.empty:
         st.download_button(
             "⬇️ Descargar CSV (.csv)",
             data=generar_csv(df_export),
-            file_name=f"dim_procesadas_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"dim_procesadas_{datetime.now'.strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv",
             use_container_width=True,
         )
