@@ -223,25 +223,15 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
     sumatoria_fletes = limpiar_monto(campo("Sumatoria Fletes/Seguros/Otros (USD)", r"82\s*\.\s*Sumatoria de fletes,?\s*seguros\s*\n?\s*y otros gastos USD\s*(" + MONTO + ")"))
     
-    # Extracción robusta Casilla 76 (Cód. Unidad Comercial) y Casilla 77 (Cantidad)
-    cod_unidad_comercial = ""
-    cantidad_comercial = 0.0
+    # Extracción robusta Casilla 76 (Unidad Comercial: kg, U, etc.) y Casilla 77 (Cantidad)
+    cod_unidad_comercial = campo("Cod. Unidad Comercial (76)", r"76\s*\.\s*Cod\.?\s*unidad\s*comercial\s*[\r\n\s]+([A-Za-z]{1,4})\b")
+    if not cod_unidad_comercial:
+        cod_unidad_comercial = campo("Cod. Unidad Comercial (76)", r"76\s*\.\s*Cod\.?\s*unidad\s*comercial\s+([A-Za-z]{1,4})\b")
 
-    m_76_77 = re.search(r"76\.\s*Cod\.?\s*unidad\b.*?([a-zA-Z]{1,4})\s+(?:77\.\s*Cantidad\s*.*?)?(" + MONTO + ")", chunk_texto, re.IGNORECASE | re.DOTALL)
-    if not m_76_77:
-        m_76_77 = re.search(r"76\.\s*Cod\.?\s*unidad\b.*?([a-zA-Z]{1,4})\s+(?:77\.\s*Cantidad\s*.*?)?(" + MONTO + ")", texto_completo, re.IGNORECASE | re.DOTALL)
-
-    if m_76_77:
-        cod_unidad_comercial = m_76_77.group(1).strip()
-        cantidad_comercial = limpiar_monto(m_76_77.group(2))
-    else:
-        m_fb = re.search(r"\b(Cod|U|kg|PR|M|GR|GL|PAR)\b\s*(" + MONTO + ")", chunk_texto, re.IGNORECASE)
-        if m_fb:
-            cod_unidad_comercial = m_fb.group(1).strip()
-            cantidad_comercial = limpiar_monto(m_fb.group(2))
-        else:
-            faltantes.append("Cod. Unidad Comercial (76)")
-            faltantes.append("Cantidad (77)")
+    cantidad_str = campo("Cantidad (77)", r"77\s*\.\s*Cantidad\s*(?:dcms\.?)?\s*[\r\n\s]+(" + MONTO + ")")
+    if not cantidad_str:
+        cantidad_str = campo("Cantidad (77)", r"77\s*\.\s*Cantidad\s*(?:dcms\.?)?\s*(" + MONTO + ")")
+    cantidad_comercial = limpiar_monto(cantidad_str)
 
     n_bultos_str = campo("No. Bultos", r"74\s*\.\s*No\.\s*bultos\s*(" + ENTERO_MILES + ")")
     try:
