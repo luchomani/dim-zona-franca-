@@ -181,7 +181,7 @@ def _buscar(patron, texto, flags=re.IGNORECASE, grupo=1):
     return None
 
 def dividir_dims(texto: str):
-    partes = re.split(r"(?=4\.\s*N[uú]mero de formulario)", texto, flags=re.IGNORECASE)
+    partes = re.split(r"(?=Declaraci[oó]n de Importaci[oó]n)", texto, flags=re.IGNORECASE)
     return [p for p in partes if re.search(r"N[uú]mero de formulario", p, re.IGNORECASE)]
 
 def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: str) -> dict:
@@ -218,45 +218,31 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\s*\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
-    # Extracción robusta Casilla 76 (Cod. Unidad Comercial) adaptada para U, kg, u, etc.
-    cod_unidad_comercial = ""
-    m_76 = re.search(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial\s*\n\s*([A-Za-z]{1,4})\b", chunk_texto, re.IGNORECASE)
-    if not m_76:
-        m_76 = re.search(r"76\s*\.?\s*([A-Za-z]{1,4})\s*\n\s*77\s*\.", chunk_texto, re.IGNORECASE)
-    if not m_76:
-        m_76 = re.search(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial[^\n]*\n\s*([A-Za-z]{1,4})\b", chunk_texto, re.IGNORECASE)
-    if not m_76:
-        m_76 = re.search(r"76\s*\.?\s*([A-Za-z]{1,4})\b", chunk_texto, re.IGNORECASE)
-
-    if m_76:
-        cod_unidad_comercial = " ".join(m_76.group(1).split())
-    else:
-        m_entre = re.search(r"76\s*\.?.*?\b([A-Za-z]{1,4})\b\s*77\s*\.", chunk_texto, re.IGNORECASE | re.DOTALL)
-        if m_entre:
-            cod_unidad_comercial = " ".join(m_entre.group(1).split())
-        else:
-            faltantes.append("Cod. Unidad Comercial (76)")
-
-    # Extracción Casilla 77 (Cantidad)
-    val_cant_str = _buscar(r"77\s*\.?\s*Cantidad[^\n]*dcms[^\n]*\n\s*(" + MONTO + ")", chunk_texto)
-    if not val_cant_str:
-        val_cant_str = _buscar(r"77\s*\.?\s*Cantidad[^\n]*\n\s*(" + MONTO + ")", chunk_texto)
-    if not val_cant_str:
-        m_q = re.search(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial[^\n]*\n\s*[A-Za-z]{1,4}\s*\n\s*77\s*\.?\s*Cantidad[^\n]*\n\s*(" + MONTO + ")", chunk_texto, re.IGNORECASE)
-        if m_q:
-            val_cant_str = m_q.group(1)
-    
-    if not val_cant_str:
-        faltantes.append("Cantidad (77)")
-        cantidad = 0.0
-    else:
-        cantidad = limpiar_monto(val_cant_str)
-
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
     sumatoria_fletes = limpiar_monto(campo("Sumatoria Fletes/Seguros/Otros (USD)", r"82\s*\.\s*Sumatoria de fletes,?\s*seguros\s*\n?\s*y otros gastos USD\s*(" + MONTO + ")"))
     
+    # Extracción robusta Casilla 76 (Cód. Unidad Comercial) y Casilla 77 (Cantidad)
+    cod_unidad_comercial = ""
+    cantidad_comercial = 0.0
+
+    m_76_77 = re.search(r"76\.\s*Cod\.?\s*unidad\b.*?([a-zA-Z]{1,4})\s+(?:77\.\s*Cantidad\s*.*?)?(" + MONTO + ")", chunk_texto, re.IGNORECASE | re.DOTALL)
+    if not m_76_77:
+        m_76_77 = re.search(r"76\.\s*Cod\.?\s*unidad\b.*?([a-zA-Z]{1,4})\s+(?:77\.\s*Cantidad\s*.*?)?(" + MONTO + ")", texto_completo, re.IGNORECASE | re.DOTALL)
+
+    if m_76_77:
+        cod_unidad_comercial = m_76_77.group(1).strip()
+        cantidad_comercial = limpiar_monto(m_76_77.group(2))
+    else:
+        m_fb = re.search(r"\b(Cod|U|kg|PR|M|GR|GL|PAR)\b\s*(" + MONTO + ")", chunk_texto, re.IGNORECASE)
+        if m_fb:
+            cod_unidad_comercial = m_fb.group(1).strip()
+            cantidad_comercial = limpiar_monto(m_fb.group(2))
+        else:
+            faltantes.append("Cod. Unidad Comercial (76)")
+            faltantes.append("Cantidad (77)")
+
     n_bultos_str = campo("No. Bultos", r"74\s*\.\s*No\.\s*bultos\s*(" + ENTERO_MILES + ")")
     try:
         no_bultos = int(re.sub(r'[^\d]', '', n_bultos_str)) if n_bultos_str else 0
@@ -281,25 +267,17 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     if not levante_no:
         faltantes.append("Levante No.")
 
-    # Extracción robusta de la Fecha del Levante (Casilla 135)
-    fecha_levante = _buscar(r"135\s*\.?\s*Fecha\s*\n\s*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", chunk_texto)
+    fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
     if not fecha_levante:
-        fecha_levante = _buscar(r"135\s*\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", chunk_texto)
-    if not fecha_levante:
-        m_f = re.search(r"Levante\s*No\.?\s*[0-9]+\s*\n\s*135\s*\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", texto_completo, re.IGNORECASE)
-        if m_f:
-            fecha_levante = m_f.group(1)
-    if not fecha_levante:
-        m_gen = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo[-1500:])
-        if m_gen:
-            fecha_levante = m_gen.group(1)
+        m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo)
+        if m_fec:
+            fecha_levante = m_fec.group(1)
+            if "Fecha del Levante" in faltantes:
+                faltantes.remove("Fecha del Levante")
 
     if fecha_levante:
         fecha_levante = re.sub(r"\s+", "", fecha_levante)
         fecha_levante = re.sub(r"[/.]", "-", fecha_levante)
-    else:
-        faltantes.append("Fecha del Levante")
-        fecha_levante = ""
 
     return {
         "Número de formulario": numero_formulario,
@@ -319,7 +297,7 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
         "Peso Neto (Kgs)": peso_neto,
         "Código de Embalaje": codigo_embalaje,
         "Cod. Unidad Comercial (76)": cod_unidad_comercial,
-        "Cantidad (77)": cantidad,
+        "Cantidad (77)": cantidad_comercial,
         "No. Bultos": no_bultos,
         "Valor FOB (USD)": valor_fob,
         "Sumatoria Fletes/Seguros/Otros (USD)": sumatoria_fletes,
@@ -387,10 +365,7 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
             (df["Número de formulario"] != "") & 
             (df["Número de formulario"].str.lower() != "nan")
         ]
-        
-        df = df.replace("", pd.NA)
-        df = df.groupby("Número de formulario", as_index=False).first()
-        df = df.fillna("")
+        df = df.drop_duplicates(subset=["Número de formulario"], keep="last").reset_index(drop=True)
 
     if "Levante No." in df.columns:
         df["Levante No."] = df["Levante No."].astype(str).str.strip()
@@ -423,6 +398,8 @@ def generar_excel(df: pd.DataFrame) -> bytes:
         total_row["Peso Bruto (Kgs)"] = df_export["Peso Bruto (Kgs)"].sum()
         total_row["Peso Neto (Kgs)"] = df_export["Peso Neto (Kgs)"].sum()
         total_row["No. Bultos"] = df_export["No. Bultos"].sum()
+        if "Cantidad (77)" in df_export.columns:
+            total_row["Cantidad (77)"] = df_export["Cantidad (77)"].sum()
         
         df_export = pd.concat([df_export, pd.DataFrame([total_row])], ignore_index=True)
 
@@ -481,7 +458,7 @@ with col_logo:
             break
     
     if not logo_encontrado:
-        st.info("💡 Sube tu imagen de logo al repositorio como `LOGO ZFS-ZFC.jpeg`.")
+        st.info("💡 Sube tu imagen de logo al directorio como `LOGO ZFS-ZFC.jpeg`.")
 
 with col_titulo:
     st.markdown("### Módulo de Gestión Aduanera")
@@ -573,6 +550,7 @@ if not df.empty:
             "Sumatoria Fletes/Seguros/Otros (USD)": st.column_config.NumberColumn(format="%.2f"),
             "Peso Bruto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
             "Peso Neto (Kgs)": st.column_config.NumberColumn(format="%.2f"),
+            "Cantidad (77)": st.column_config.NumberColumn(format="%.2f"),
             "No. Bultos": st.column_config.NumberColumn(format="%d"),
         }
     )
@@ -596,7 +574,7 @@ if not df.empty:
     with col1:
         st.download_button(
             "⬇️ Descargar Reporte en Excel (.xlsx)",
-            data=generar_excel(df_export),
+            data=generer_excel_bytes := generar_excel(df_export),
             file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
