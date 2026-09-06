@@ -218,8 +218,31 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\s*\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
-    cod_unidad_comercial = campo("Cod. Unidad Comercial (76)", r"76\.?\s*Cod[^\n]*unidad[^\n]*77[^\n]*Cantidad(?:[^\n]*\n){1,6}?([A-Za-z]{1,4})\b")
-    cantidad = limpiar_monto(campo("Cantidad (77)", r"76\.?\s*Cod[^\n]*unidad[^\n]*77[^\n]*Cantidad(?:[^\n]*\n){1,6}?[A-Za-z]{1,4}\s*\n\s*([\d\.,]+)"))
+    # Extracción flexible Casillas 76 y 77
+    cod_unidad_comercial = _buscar(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial[^\n]*\n\s*([A-Za-z]{1,4})\b", chunk_texto)
+    if not cod_unidad_comercial:
+        cod_unidad_comercial = _buscar(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*\n\s*([A-Za-z]{1,4})\b", chunk_texto)
+    if not cod_unidad_comercial:
+        cod_unidad_comercial = _buscar(r"76\s*\.?\s*([A-Za-z]{1,4})\b", chunk_texto)
+    if not cod_unidad_comercial:
+        faltantes.append("Cod. Unidad Comercial (76)")
+        cod_unidad_comercial = ""
+    else:
+        cod_unidad_comercial = " ".join(cod_unidad_comercial.split())
+
+    val_cant_str = _buscar(r"77\s*\.?\s*Cantidad[^\n]*dcms[^\n]*\n\s*(" + MONTO + ")", chunk_texto)
+    if not val_cant_str:
+        val_cant_str = _buscar(r"77\s*\.?\s*Cantidad[^\n]*\n\s*(" + MONTO + ")", chunk_texto)
+    if not val_cant_str:
+        m_q = re.search(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial[^\n]*\n\s*[A-Za-z]{1,4}\s*\n\s*77\s*\.?\s*Cantidad[^\n]*\n\s*(" + MONTO + ")", chunk_texto, re.IGNORECASE)
+        if m_q:
+            val_cant_str = m_q.group(1)
+    
+    if not val_cant_str:
+        faltantes.append("Cantidad (77)")
+        cantidad = 0.0
+    else:
+        cantidad = limpiar_monto(val_cant_str)
 
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
@@ -250,15 +273,25 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     if not levante_no:
         faltantes.append("Levante No.")
 
-    fecha_levante = _buscar(r"Firma funcionario responsable(?:[^\n]*\n){1,4}?(20\d{2}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", chunk_texto, flags=re.IGNORECASE)
+    # Extracción robusta de la Fecha del Levante (Casilla 135)
+    fecha_levante = _buscar(r"135\s*\.?\s*Fecha\s*\n\s*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", chunk_texto)
     if not fecha_levante:
-        fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
-    
+        fecha_levante = _buscar(r"135\s*\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", chunk_texto)
+    if not fecha_levante:
+        m_f = re.search(r"Levante\s*No\.?\s*[0-9]+\s*\n\s*135\s*\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", texto_completo, re.IGNORECASE)
+        if m_f:
+            fecha_levante = m_f.group(1)
+    if not fecha_levante:
+        m_gen = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo[-1500:])
+        if m_gen:
+            fecha_levante = m_gen.group(1)
+
     if fecha_levante:
         fecha_levante = re.sub(r"\s+", "", fecha_levante)
         fecha_levante = re.sub(r"[/.]", "-", fecha_levante)
-        if "Fecha del Levante" in faltantes:
-            faltantes.remove("Fecha del Levante")
+    else:
+        faltantes.append("Fecha del Levante")
+        fecha_levante = ""
 
     return {
         "Número de formulario": numero_formulario,
@@ -347,7 +380,6 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
             (df["Número de formulario"].str.lower() != "nan")
         ]
         
-        # Agrupa por Número de Formulario y fusiona los datos de múltiples páginas (ej. DIM + Acta)
         df = df.replace("", pd.NA)
         df = df.groupby("Número de formulario", as_index=False).first()
         df = df.fillna("")
@@ -450,7 +482,6 @@ with col_titulo:
 
 st.divider()
 
-# Inicialización de variables de estado
 if "df_resultado_dim" not in st.session_state:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
 
@@ -460,7 +491,6 @@ if "uploader_key" not in st.session_state:
 with st.container():
     st.subheader("1. Carga de Documentación Aduanera")
     
-    # El key dinámico permite recrear el componente limpiando los archivos cargados
     uploaded_files = st.file_uploader(
         "Arrastra y suelta tus archivos PDF individuales o paquetes comprimidos en formato .ZIP",
         type=["pdf", "zip"],
@@ -476,7 +506,7 @@ with st.container():
 
 if limpiar:
     st.session_state.df_resultado_dim = pd.DataFrame(columns=COLUMNAS)
-    st.session_state.uploader_key += 1  # Incrementa la llave para vaciar el file_uploader
+    st.session_state.uploader_key += 1
     st.rerun()
 
 if procesar:
