@@ -574,7 +574,7 @@ if not df.empty:
     with col1:
         st.download_button(
             "⬇️ Descargar Reporte en Excel (.xlsx)",
-            data=generer_excel_bytes := generar_excel(df_export),
+            data=generar_excel(df_export),
             file_name=f"dim_zona_franca_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
