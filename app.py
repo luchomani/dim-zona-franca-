@@ -218,18 +218,26 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\s*\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
-    # Extracción flexible Casillas 76 y 77
-    cod_unidad_comercial = _buscar(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial[^\n]*\n\s*([A-Za-z]{1,4})\b", chunk_texto)
-    if not cod_unidad_comercial:
-        cod_unidad_comercial = _buscar(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*\n\s*([A-Za-z]{1,4})\b", chunk_texto)
-    if not cod_unidad_comercial:
-        cod_unidad_comercial = _buscar(r"76\s*\.?\s*([A-Za-z]{1,4})\b", chunk_texto)
-    if not cod_unidad_comercial:
-        faltantes.append("Cod. Unidad Comercial (76)")
-        cod_unidad_comercial = ""
-    else:
-        cod_unidad_comercial = " ".join(cod_unidad_comercial.split())
+    # Extracción robusta Casilla 76 (Cod. Unidad Comercial) adaptada para U, kg, u, etc.
+    cod_unidad_comercial = ""
+    m_76 = re.search(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial\s*\n\s*([A-Za-z]{1,4})\b", chunk_texto, re.IGNORECASE)
+    if not m_76:
+        m_76 = re.search(r"76\s*\.?\s*([A-Za-z]{1,4})\s*\n\s*77\s*\.", chunk_texto, re.IGNORECASE)
+    if not m_76:
+        m_76 = re.search(r"76\s*\.?\s*Cod[^\n]*unidad[^\n]*comercial[^\n]*\n\s*([A-Za-z]{1,4})\b", chunk_texto, re.IGNORECASE)
+    if not m_76:
+        m_76 = re.search(r"76\s*\.?\s*([A-Za-z]{1,4})\b", chunk_texto, re.IGNORECASE)
 
+    if m_76:
+        cod_unidad_comercial = " ".join(m_76.group(1).split())
+    else:
+        m_entre = re.search(r"76\s*\.?.*?\b([A-Za-z]{1,4})\b\s*77\s*\.", chunk_texto, re.IGNORECASE | re.DOTALL)
+        if m_entre:
+            cod_unidad_comercial = " ".join(m_entre.group(1).split())
+        else:
+            faltantes.append("Cod. Unidad Comercial (76)")
+
+    # Extracción Casilla 77 (Cantidad)
     val_cant_str = _buscar(r"77\s*\.?\s*Cantidad[^\n]*dcms[^\n]*\n\s*(" + MONTO + ")", chunk_texto)
     if not val_cant_str:
         val_cant_str = _buscar(r"77\s*\.?\s*Cantidad[^\n]*\n\s*(" + MONTO + ")", chunk_texto)
