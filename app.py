@@ -126,6 +126,8 @@ COLUMNAS = [
     "Peso Bruto (Kgs)",
     "Peso Neto (Kgs)",
     "Código de Embalaje",
+    "Cod. Unidad Comercial (76)",
+    "Cantidad (77)",
     "No. Bultos",
     "Valor FOB (USD)",
     "Sumatoria Fletes/Seguros/Otros (USD)",
@@ -179,7 +181,7 @@ def _buscar(patron, texto, flags=re.IGNORECASE, grupo=1):
     return None
 
 def dividir_dims(texto: str):
-    partes = re.split(r"(?=Declaraci[oó]n de Importaci[oó]n)", texto, flags=re.IGNORECASE)
+    partes = re.split(r"(?=4\.\s*N[uú]mero de formulario)", texto, flags=re.IGNORECASE)
     return [p for p in partes if re.search(r"N[uú]mero de formulario", p, re.IGNORECASE)]
 
 def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: str) -> dict:
@@ -216,6 +218,9 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     cod_pais_compra = campo("Cod. País Compra", r"70\s*\.\s*Cod\s*\.\s*pa[ií]s\s*\n?\s*compra\s*(\d{2,3})")
     codigo_embalaje = campo("Código de Embalaje", r"73\s*\.\s*C[oó]digo\s*\n?\s*embalaje\s*([A-Za-z0-9]{1,4})")
     
+    cod_unidad_comercial = campo("Cod. Unidad Comercial (76)", r"76\.?\s*Cod[^\n]*unidad[^\n]*77[^\n]*Cantidad(?:[^\n]*\n){1,6}?([A-Za-z]{1,4})\b")
+    cantidad = limpiar_monto(campo("Cantidad (77)", r"76\.?\s*Cod[^\n]*unidad[^\n]*77[^\n]*Cantidad(?:[^\n]*\n){1,6}?[A-Za-z]{1,4}\s*\n\s*([\d\.,]+)"))
+
     peso_bruto = limpiar_monto(campo("Peso Bruto (Kgs)", r"71\s*\.\s*Peso bruto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
@@ -245,17 +250,15 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     if not levante_no:
         faltantes.append("Levante No.")
 
-    fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
+    fecha_levante = _buscar(r"Firma funcionario responsable(?:[^\n]*\n){1,4}?(20\d{2}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})", chunk_texto, flags=re.IGNORECASE)
     if not fecha_levante:
-        m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo)
-        if m_fec:
-            fecha_levante = m_fec.group(1)
-            if "Fecha del Levante" in faltantes:
-                faltantes.remove("Fecha del Levante")
-
+        fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
+    
     if fecha_levante:
         fecha_levante = re.sub(r"\s+", "", fecha_levante)
         fecha_levante = re.sub(r"[/.]", "-", fecha_levante)
+        if "Fecha del Levante" in faltantes:
+            faltantes.remove("Fecha del Levante")
 
     return {
         "Número de formulario": numero_formulario,
@@ -274,6 +277,8 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
         "Peso Bruto (Kgs)": peso_bruto,
         "Peso Neto (Kgs)": peso_neto,
         "Código de Embalaje": codigo_embalaje,
+        "Cod. Unidad Comercial (76)": cod_unidad_comercial,
+        "Cantidad (77)": cantidad,
         "No. Bultos": no_bultos,
         "Valor FOB (USD)": valor_fob,
         "Sumatoria Fletes/Seguros/Otros (USD)": sumatoria_fletes,
@@ -341,7 +346,11 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
             (df["Número de formulario"] != "") & 
             (df["Número de formulario"].str.lower() != "nan")
         ]
-        df = df.drop_duplicates(subset=["Número de formulario"], keep="last").reset_index(drop=True)
+        
+        # Agrupa por Número de Formulario y fusiona los datos de múltiples páginas (ej. DIM + Acta)
+        df = df.replace("", pd.NA)
+        df = df.groupby("Número de formulario", as_index=False).first()
+        df = df.fillna("")
 
     if "Levante No." in df.columns:
         df["Levante No."] = df["Levante No."].astype(str).str.strip()
