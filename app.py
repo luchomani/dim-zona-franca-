@@ -172,6 +172,8 @@ def limpiar_monto(val_str):
         return 0.0
 
 def _buscar(patron, texto, flags=re.IGNORECASE, grupo=1):
+    if not texto:
+        return None
     m = re.search(patron, texto, flags)
     if m:
         try:
@@ -222,7 +224,7 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     peso_neto = limpiar_monto(campo("Peso Neto (Kgs)", r"72\s*\.\s*Peso neto kgs\.\s*dcms\.\s*(" + MONTO + ")"))
     valor_fob = limpiar_monto(campo("Valor FOB (USD)", r"78\s*\.\s*Valor FOB USD\s*(" + MONTO + ")"))
     sumatoria_fletes = limpiar_monto(campo("Sumatoria Fletes/Seguros/Otros (USD)", r"82\s*\.\s*Sumatoria de fletes,?\s*seguros\s*\n?\s*y otros gastos USD\s*(" + MONTO + ")"))
-    
+
     # Extracción robusta Casilla 76 (Unidad Comercial: kg, U, etc.) y Casilla 77 (Cantidad)
     cod_unidad_comercial = campo("Cod. Unidad Comercial (76)", r"76\s*\.\s*Cod\.?\s*unidad\s*comercial\s*[\r\n\s]+([A-Za-z]{1,4})\b")
     if not cod_unidad_comercial:
@@ -239,27 +241,67 @@ def extraer_campos_dim(chunk_texto: str, texto_completo: str, nombre_archivo: st
     except ValueError:
         no_bultos = 0
 
+    # 🔧 FIX: Acta de Inspección — buscar PRIMERO dentro del chunk (DIM individual)
     acta_inspeccion = ""
-    m_acta = re.search(r"ACTA\s+DE\s+INSPECCI[OÓ]N\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
+    m_acta = re.search(
+        r"ACTA\s+DE\s+INSPECCI[OÓ]N\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})",
+        chunk_texto, re.IGNORECASE
+    )
+    if not m_acta and texto_completo:
+        m_acta = re.search(
+            r"ACTA\s+DE\s+INSPECCI[OÓ]N\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})",
+            texto_completo, re.IGNORECASE
+        )
     if m_acta:
         acta_inspeccion = m_acta.group(1).strip()
 
+    # 🔧 FIX: Levante No. — buscar PRIMERO dentro del chunk (DIM individual)
     levante_no = ""
     m_lev_box = re.search(r"134\.?\s*Levante\s+No\.?\s*([0-9]{8,15})", chunk_texto, re.IGNORECASE)
     if m_lev_box:
         levante_no = m_lev_box.group(1).strip()
-    
+
     if not levante_no:
-        m_lev_gen = re.search(r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})", texto_completo, re.IGNORECASE)
+        m_lev_gen = re.search(
+            r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})",
+            chunk_texto, re.IGNORECASE
+        )
+        if m_lev_gen:
+            levante_no = m_lev_gen.group(1).strip()
+
+    if not levante_no and texto_completo:
+        m_lev_gen = re.search(
+            r"(?:Levante|Auto(?:rización)?)\s*(?:No\.?|Número)?\s*[:\.]?\s*([0-9]{8,15})",
+            texto_completo, re.IGNORECASE
+        )
         if m_lev_gen:
             levante_no = m_lev_gen.group(1).strip()
 
     if not levante_no:
         faltantes.append("Levante No.")
 
-    fecha_levante = campo("Fecha del Levante", r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})")
+    # 🔧 FIX: Fecha del Levante — buscar PRIMERO dentro del chunk
+    fecha_levante = _buscar(
+        r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})",
+        chunk_texto
+    )
+    if not fecha_levante and texto_completo:
+        fecha_levante = _buscar(
+            r"135\.?\s*Fecha[^\d\n]*(\d{4}\s*[-/\.]\s*\d{2}\s*[-/\.]\s*\d{2})",
+            texto_completo
+        )
+
     if not fecha_levante:
-        m_fec = re.search(r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b", texto_completo)
+        # Fallback: cualquier fecha genérica dentro del chunk
+        m_fec = re.search(
+            r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b",
+            chunk_texto
+        )
+        if not m_fec and texto_completo:
+            m_fec = re.search(
+                r"\b(20\d{2}[-/\.](?:0[1-9]|1[0-2])[-/\.](?:0[1-9]|[12]\d|3[01]))\b",
+                texto_completo
+            )
         if m_fec:
             fecha_levante = m_fec.group(1)
             if "Fecha del Levante" in faltantes:
@@ -332,8 +374,20 @@ def procesar_archivos(uploaded_files, progress_callback=None) -> pd.DataFrame:
             dim_chunks = dividir_dims(texto_completo)
             if not dim_chunks:
                 dim_chunks = [texto_completo]
-            for chunk in dim_chunks:
-                fila = extraer_campos_dim(chunk, texto_completo, nombre_pdf)
+
+            # 🔧 FIX CRÍTICO:
+            # Si el PDF contiene VARIAS DIM, NO usar el texto completo como
+            # fallback, porque tomaría datos de OTRAS DIM (levantes/actas).
+            # El fallback solo se usa cuando es una sola DIM.
+            es_multi_dim = len(dim_chunks) > 1
+            texto_fallback = "" if es_multi_dim else texto_completo
+
+            for idx_chunk, chunk in enumerate(dim_chunks, start=1):
+                nombre_registro = nombre_pdf
+                if es_multi_dim:
+                    # Identificar cada DIM dentro del archivo mergeado
+                    nombre_registro = f"{nombre_pdf} [DIM {idx_chunk}/{len(dim_chunks)}]"
+                fila = extraer_campos_dim(chunk, texto_fallback, nombre_registro)
                 filas.append(fila)
         except Exception as exc: 
             fila = {c: "" for c in COLUMNAS}
